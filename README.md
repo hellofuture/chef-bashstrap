@@ -7,6 +7,8 @@ There a better methods for achieving this at scale but when managing a single se
 
 If you've found yourself writing an update.sh script that runs knife with the various command line arguments you need then this might come in handy. The scripts also helps keep various secrets out of your scripting and therefore out of your repositories.
 
+**THIS IS NOT READY FOR YOU TO USE YET**
 
+**WE NEED TO IRON OUT A FEW BUGS RELATED TO VPC AND WRITE SOME SENSIBLE EXAMPLES **
 
 
