@@ -80,20 +80,30 @@ while test $# -gt 0; do
       echo "${bldblu}$me${txtrst} - $TITLE"
       echo
       echo "Usage: $me [arguments] name for new instance"
-      echo " "
-      echo "options:"
-      echo "-h, --help                  show brief help"
-      echo "-b, --berks                 upload cookbooks from berkshelf to chef server"
-      echo "-u, --update                don't create, run chef-client on all existing servers"
-      echo "--local                     upload local cookbook (for development)"
-      echo "--elastic-ip=ELASTIC_IP     assign that elastic ip"
-      echo "--subnet=VPC_SUBNET         assign subnet (needed if not az a)"
-      echo "-a, --az=AVAILABILITY_ZONE  specify the availability zone for the instance"
-      echo "--flavor=FLAVOR             specify flavor (default ${FLAVOR})"
-      echo "--environment=ENVIRONMENT   chef environment to use"
-      echo "--ami=AMI_ID                specify ami"
-      echo "--ssh-key=SSH_KEY           specify SSH KEY to use"
-      echo "--attribute=ATTRIBUTE       specify node connect attribute"
+      echo 
+      echo "Main options:"
+      echo
+      echo "-b, --berks                     upload cookbooks from berkshelf to chef server"
+      echo "-h, --help                      show brief help (this)"
+      echo "-u, --update                    don't create, run chef-client on all existing servers"
+      echo 
+      echo "Other options:"
+      echo
+      echo "-a, --az=AVAILABILITY_ZONE      specify the availability zone for the instance"
+      echo "--ami=AMI_ID                    specify ami"
+      echo "--attribute=ATTRIBUTE           specify node connect attribute"
+      echo "--ec2-role=EC2_ROLE             create an ec2 tag called Role=EC2_ROLE"
+      echo "--elastic-ip=ELASTIC_IP         assign that elastic ip"
+      echo "--environment=ENVIRONMENT       chef environment to use"
+      echo "--flavor=FLAVOR                 specify flavor"
+      echo "--iam-profile=IAM_PROFILE       IAM profile for the instance"
+      echo "--local                         upload local cookbook (for development)"
+      echo "--public-ip=PUBLIC_IP           request a public ip"
+      echo "--security-group=SECURITY_GROUP specify the security group id to assign"
+      echo "--ssh-key=SSH_KEY               specify SSH key to use"
+      echo "--ssh-path=SSH_PATH             path to your SSH key"
+      echo "--subnet=VPC_SUBNET             assign subnet"
+      echo "--sudo                          sudo before running chef-client"
       echo
       exit 0
     ;;
@@ -131,17 +141,41 @@ while test $# -gt 0; do
       BASE_AMI_ID=`echo $1 | sed -e 's/^[^=]*=//g'`
       shift
       ;;
+    --public-ip*)
+      PUBLIC_IP=`echo $1 | sed -e 's/^[^=]*=//g'`
+      shift
+      ;;
     --ssh-key*)
       SSH_KEY=`echo $1 | sed -e 's/^[^=]*=//g'`
+      shift
+      ;;
+    --ssh-path*)
+      SSH_PATH=`echo $1 | sed -e 's/^[^=]*=//g'`
       shift
       ;;
     --attribute*)
       ATTRIBUTE=`echo $1 | sed -e 's/^[^=]*=//g'`
       shift
       ;;
+    --ec2-role*)
+      EC2_ROLE=`echo $1 | sed -e 's/^[^=]*=//g'`
+      shift
+      ;;
+    --iam-profile*)
+      IAM_PROFILE=`echo $1 | sed -e 's/^[^=]*=//g'`
+      shift
+      ;;
+    --security-group*)
+      SECURITY_GROUP=`echo $1 | sed -e 's/^[^=]*=//g'`
+      shift
+      ;;
     -b|--berks)
       shift
       BERKS="Y"
+      ;;
+    --sudo)
+      shift
+      SUDO="Y"
       ;;
     -u|--update)
       shift
@@ -167,6 +201,12 @@ fi
 if [ "$UPDATE" == "N" ] && [ -z "$AVAILABILITY_ZONE" ]
 then
   echo "${bldred}You must specify an availability zone for the instance (try --help)${txtrst}"
+  exit 1
+fi
+
+if [ -z "$SECURITY_GROUP"]
+then
+  echo "${bldred}You must specify a security group for the instance (try --help)${txtrst}"
   exit 1
 fi
 
@@ -219,6 +259,11 @@ else
   ARG_NODE_CONNECT_ATTRIBUTE=""
 fi
 
+if [ -z "$SSH_PATH" ]
+then
+  SSH_PATH=".ssh"
+fi
+
 if [ -z "$SSH_KEY" ] && [ -z "$AWS_SSH_KEY_ID" ]
 then
   echo "${bldred}You must specify a SSH_KEY or the argument --ssh-key${txtrst}"
@@ -230,8 +275,22 @@ else
   fi
   if [ -z "$IDENTITY_FILE" ] 
   then
-    IDENTITY_FILE=".ssh/$AWS_SSH_KEY_ID.pem"
+    IDENTITY_FILE="$SSH_PATH/$AWS_SSH_KEY_ID.pem"
   fi
+fi
+
+if [ -z "$VPC_SUBNET" ]
+then
+  ARG_VPC_SUBNET=""
+else
+  ARG_VPC_SUBNET="--subnet $VPC_SUBNET"
+fi
+
+if [ -z "$EC2_ROLE" ]
+then
+  ARG_EC2_ROLE=""
+else
+  ARG_EC2_ROLE="-T Role=$EC2_ROLE"
 fi
 
 ##################################################################################
@@ -275,18 +334,21 @@ do_berks() {
 }
 
 do_local_cookbooks() {
-  if [ -z "$LOCAL_COOKBOOKS" ]
-  then 
-    echo
-    echo "${bldylw}No LOCAL_COOKBOOKS specified${txtrst}"
-  else
-    echo
-    echo "${bldblu}Uploading local cookbooks..${txtrst}"
-    echo
-    for cookbook in ${LOCAL_COOKBOOKS}
-    do
-      knife cookbook upload $cookbook
-    done
+  if [ ! -z "$LOCAL" ]
+  then
+    if [ -z "$LOCAL_COOKBOOKS" ]
+    then 
+      echo
+      echo "${bldylw}No LOCAL_COOKBOOKS specified${txtrst}"
+    else
+      echo
+      echo "${bldblu}Uploading local cookbooks..${txtrst}"
+      echo
+      for cookbook in ${LOCAL_COOKBOOKS}
+      do
+        knife cookbook upload $cookbook
+      done
+    fi
   fi
 }
 
@@ -342,9 +404,9 @@ do_update() {
 
     if [ -z "$ENVIRONMENT" ]
     then
-      echo knife ssh "role:${ROLE}" "$tCOMMAND" -x $SSH_USER $ARG_NODE_CONNECT_ATTRIBUTE  -i $IDENTITY_FILE $ARG_ENVIRONMENT
+      echo knife ssh "roles:${ROLE}" "$tCOMMAND" -x $SSH_USER $ARG_NODE_CONNECT_ATTRIBUTE  -i $IDENTITY_FILE $ARG_ENVIRONMENT
     else
-      echo knife ssh "chef_environment:${ENVIRONMENT} AND role:${ROLE}" "$tCOMMAND" -x $SSH_USER $ARG_NODE_CONNECT_ATTRIBUTE -i $IDENTITY_FILE $ARG_ENVIRONMENT
+      echo knife ssh "chef_environment:${ENVIRONMENT} AND roles:${ROLE}" "$tCOMMAND" -x $SSH_USER $ARG_NODE_CONNECT_ATTRIBUTE -i $IDENTITY_FILE $ARG_ENVIRONMENT
     fi
     exit 0
   fi
@@ -359,11 +421,6 @@ check_security_groups() {
   if [ ! -z "$SECURITY_GROUP" ]
   then
     aws ec2 describe-security-groups --group-ids $SECURITY_GROUP > /dev/null
-  fi
-
-  if [ ! -z "$MY_SECURITY_GROUP" ]
-  then
-    aws ec2 describe-security-groups --group-ids $MY_SECURITY_GROUP > /dev/null
   fi
 }
 
@@ -425,7 +482,7 @@ do_instance() {
     echo
     echo "${bldblu}Creating ${NAME} server node...${txtrst}"
     echo
-    knife ec2 server create --image $BASE_AMI_ID --node-name $NAME --run-list "$RUN_LIST" --identity-file $IDENTITY_FILE --flavor $FLAVOR --security-group-ids $SECURITY_GROUP,$MY_SECURITY_GROUP --ssh-key $AWS_SSH_KEY_ID -x $SSH_USER --availability-zone ${AWS_REGION}${AVAILABILITY_ZONE} -T Role=$EC2_ROLE --subnet $VPC_SUBNET $ARG_NODE_CONNECT_ATTRIBUTE $ARG_ENVIRONMENT $ARG_IAM_PROFILE $ARG_PUBLIC_IP $ARG_ELASTIC_IP
+    knife ec2 server create --image $BASE_AMI_ID --node-name $NAME --run-list "$RUN_LIST" --identity-file $IDENTITY_FILE --flavor $FLAVOR --security-group-ids $SECURITY_GROUP --ssh-key $AWS_SSH_KEY_ID -x $SSH_USER --availability-zone ${AWS_REGION}${AVAILABILITY_ZONE} $ARG_VPC_SUBNET $ARG_EC2_ROLE $ARG_NODE_CONNECT_ATTRIBUTE $ARG_ENVIRONMENT $ARG_IAM_PROFILE $ARG_PUBLIC_IP $ARG_ELASTIC_IP
   else
     echo
     echo "${bldblu}${NAME} exists as node ${INSTANCE}...${txtrst}"
